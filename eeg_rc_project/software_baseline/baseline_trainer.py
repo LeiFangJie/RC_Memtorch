@@ -92,9 +92,10 @@ def compute_flops(model, input_shape=(1, 4, 512)):
     """
     if not THOP_AVAILABLE:
         return None, None
-    
+
     try:
-        dummy_input = torch.randn(input_shape)
+        device = next(model.parameters()).device
+        dummy_input = torch.randn(input_shape).to(device)
         flops, params = profile(model, inputs=(dummy_input,), verbose=False)
         return flops, params
     except Exception as e:
