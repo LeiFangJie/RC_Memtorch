@@ -257,6 +257,40 @@ def train_baseline(model_class, model_name, patient_id, epochs=15, lr=0.0005,
     if flops:
         print(f"[Model] FLOPs: {flops/1e6:.2f}M")
     
+    # 定义检查点路径
+    checkpoint_path = os.path.join(
+        os.path.dirname(__file__), 
+        'checkpoints', 
+        f"{model_name}_{patient_id}_best.pth"
+    )
+    
+    # 检查检查点是否存在，存在则直接加载并跳过训练
+    if os.path.exists(checkpoint_path):
+        print(f"\n[Checkpoint] Found existing checkpoint at {checkpoint_path}")
+        print(f"[Checkpoint] Loading checkpoint and skipping training...")
+        model.load_state_dict(torch.load(checkpoint_path, map_location=device), strict=False)
+        
+        # 直接进行评估
+        final_f1, final_precision, final_recall, _, _ = evaluate(model, test_loader, device)
+        
+        print(f"[Results] F1: {final_f1:.4f} | Precision: {final_precision:.4f} | Recall: {final_recall:.4f}")
+        print(f"[Checkpoint] Training skipped. Loaded from checkpoint.")
+        
+        # 返回结果（训练时间为0，因为没有训练）
+        result = {
+            "model_name": model_name,
+            "patient_id": patient_id,
+            "params": params_count,
+            "flops": flops if flops else 0,
+            "f1": final_f1,
+            "precision": final_precision,
+            "recall": final_recall,
+            "training_time": 0,
+            "best_epoch_f1": final_f1,
+            "loaded_from_checkpoint": True
+        }
+        return result
+    
     # 损失函数和优化器
     criterion = FocalLoss(alpha=0.5, gamma=2)
     optimizer = optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
@@ -275,11 +309,6 @@ def train_baseline(model_class, model_name, patient_id, epochs=15, lr=0.0005,
         # 保存最佳模型
         if f1 > best_f1:
             best_f1 = f1
-            checkpoint_path = os.path.join(
-                os.path.dirname(__file__), 
-                'checkpoints', 
-                f"{model_name}_{patient_id}_best.pth"
-            )
             os.makedirs(os.path.dirname(checkpoint_path), exist_ok=True)
             torch.save(model.state_dict(), checkpoint_path)
         
@@ -292,7 +321,7 @@ def train_baseline(model_class, model_name, patient_id, epochs=15, lr=0.0005,
     
     # 最终评估
     print(f"\n[Final Evaluation] Loading best model...")
-    model.load_state_dict(torch.load(checkpoint_path))
+    model.load_state_dict(torch.load(checkpoint_path, map_location=device), strict=False)
     final_f1, final_precision, final_recall, _, _ = evaluate(model, test_loader, device)
     
     print(f"[Results] F1: {final_f1:.4f} | Precision: {final_precision:.4f} | Recall: {final_recall:.4f}")
