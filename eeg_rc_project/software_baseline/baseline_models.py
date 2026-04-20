@@ -51,6 +51,22 @@ class Baseline_CNN1D(nn.Module):
             nn.Linear(64, num_classes)
         )
         
+        self._initialize_weights()
+        
+    def _initialize_weights(self):
+        """使用Kaiming初始化权重，有利于ReLU激活函数的收敛"""
+        for m in self.modules():
+            if isinstance(m, nn.Conv1d):
+                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
+            elif isinstance(m, nn.BatchNorm1d):
+                nn.init.constant_(m.weight, 1)
+                nn.init.constant_(m.bias, 0)
+            elif isinstance(m, nn.Linear):
+                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+                nn.init.constant_(m.bias, 0)
+        
     def forward(self, x):
         # x: (batch, 4, 512)
         x = self.features(x)
@@ -98,6 +114,29 @@ class Baseline_CNN_LSTM(nn.Module):
             nn.Dropout(0.2),
             nn.Linear(64, num_classes)
         )
+        
+        self._initialize_weights()
+        
+    def _initialize_weights(self):
+        """使用Kaiming初始化权重"""
+        for m in self.modules():
+            if isinstance(m, nn.Conv1d):
+                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
+            elif isinstance(m, nn.BatchNorm1d):
+                nn.init.constant_(m.weight, 1)
+                nn.init.constant_(m.bias, 0)
+            elif isinstance(m, (nn.Linear, nn.LSTM)):
+                if isinstance(m, nn.Linear):
+                    nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+                    nn.init.constant_(m.bias, 0)
+                elif isinstance(m, nn.LSTM):
+                    for name, param in m.named_parameters():
+                        if 'weight' in name:
+                            nn.init.orthogonal_(param)
+                        elif 'bias' in name:
+                            nn.init.constant_(param, 0)
         
     def forward(self, x):
         # x: (batch, 4, 512)
@@ -159,6 +198,23 @@ class Baseline_Transformer(nn.Module):
             nn.Dropout(0.2),
             nn.Linear(64, num_classes)
         )
+        
+        self._initialize_weights()
+        
+    def _initialize_weights(self):
+        """使用Xavier和正态分布初始化权重（适合Transformer）"""
+        for m in self.modules():
+            if isinstance(m, nn.Linear):
+                # Transformer线性层使用Xavier初始化
+                nn.init.xavier_uniform_(m.weight)
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
+            elif isinstance(m, nn.LayerNorm):
+                nn.init.constant_(m.weight, 1)
+                nn.init.constant_(m.bias, 0)
+        
+        # 位置编码使用正态分布初始化
+        nn.init.normal_(self.pos_embed, std=0.02)
         
     def forward(self, x):
         # x: (batch, 4, 512)
@@ -246,6 +302,22 @@ class Baseline_DeepCNN(nn.Module):
             nn.Dropout(0.2),
             nn.Linear(64, num_classes)
         )
+        
+        self._initialize_weights()
+        
+    def _initialize_weights(self):
+        """使用Kaiming初始化权重（深度CNN需要更好的初始化）"""
+        for m in self.modules():
+            if isinstance(m, nn.Conv1d):
+                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
+            elif isinstance(m, nn.BatchNorm1d):
+                nn.init.constant_(m.weight, 1)
+                nn.init.constant_(m.bias, 0)
+            elif isinstance(m, nn.Linear):
+                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+                nn.init.constant_(m.bias, 0)
         
     def forward(self, x):
         # x: (batch, 4, 512)
