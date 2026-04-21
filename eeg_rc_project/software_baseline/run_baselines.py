@@ -35,6 +35,35 @@ MODEL_REGISTRY = {
 }
 
 
+# 模型默认超参数配置 - 可在代码开头自定义每个模型的epochs等参数
+MODEL_CONFIG = {
+    "cnn1d": {
+        "epochs": 20,
+        "lr": 0.0005,
+        "batch_size": 256,
+        "weight_decay": 1e-4,
+    },
+    "cnn_lstm": {
+        "epochs": 80,      # LSTM需要更多epochs收敛
+        "lr": 0.0003,
+        "batch_size": 128,
+        "weight_decay": 1e-4,
+    },
+    "transformer": {
+        "epochs": 80,      # Transformer需要更多epochs
+        "lr": 0.0001,      # 更小的学习率稳定训练
+        "batch_size": 64,  # 更大的模型用更小batch
+        "weight_decay": 1e-4,
+    },
+    "deepcnn": {
+        "epochs": 50,
+        "lr": 0.0005,
+        "batch_size": 256,
+        "weight_decay": 1e-4,
+    },
+}
+
+
 def check_bands_data(patient_id):
     """检查频带分解数据是否存在"""
     bands_path = os.path.join(PROCESSED_DATA_DIR, f"{patient_id}_bands.pt")
@@ -64,14 +93,18 @@ def get_available_patients():
     return sorted(available)
 
 
-def run_single_model(model_key, patient_id, epochs=15, device=None):
+def run_single_model(model_key, patient_id, epochs=None, lr=None, 
+                     batch_size=None, weight_decay=None, device=None):
     """
     运行单个基线模型。
     
     参数:
         model_key: 模型标识 (cnn1d/cnn_lstm/transformer/deepcnn)
         patient_id: 患者ID
-        epochs: 训练轮数
+        epochs: 训练轮数（默认从MODEL_CONFIG读取）
+        lr: 学习率（默认从MODEL_CONFIG读取）
+        batch_size: 批次大小（默认从MODEL_CONFIG读取）
+        weight_decay: 权重衰减（默认从MODEL_CONFIG读取）
         device: 计算设备
         
     返回:
@@ -83,6 +116,15 @@ def run_single_model(model_key, patient_id, epochs=15, device=None):
         return None
     
     model_class, model_name = MODEL_REGISTRY[model_key]
+    
+    # 从MODEL_CONFIG获取默认配置，参数传入则覆盖
+    config = MODEL_CONFIG.get(model_key, {})
+    epochs = epochs if epochs is not None else config.get("epochs", 15)
+    lr = lr if lr is not None else config.get("lr", 0.0005)
+    batch_size = batch_size if batch_size is not None else config.get("batch_size", 256)
+    weight_decay = weight_decay if weight_decay is not None else config.get("weight_decay", 1e-4)
+    
+    print(f"[Config] {model_name}: epochs={epochs}, lr={lr}, batch_size={batch_size}")
     
     # 检查数据是否存在
     if not check_bands_data(patient_id):
@@ -96,13 +138,17 @@ def run_single_model(model_key, patient_id, epochs=15, device=None):
         model_name=model_name,
         patient_id=patient_id,
         epochs=epochs,
+        lr=lr,
+        weight_decay=weight_decay,
+        batch_size=batch_size,
         device=device
     )
     
     return result
 
 
-def run_all_models(patient_id, epochs=15, device=None):
+def run_all_models(patient_id, epochs=None, lr=None, batch_size=None, 
+                    weight_decay=None, device=None):
     """
     运行所有基线模型。
     
@@ -117,7 +163,8 @@ def run_all_models(patient_id, epochs=15, device=None):
     results = []
     
     for model_key in MODEL_REGISTRY.keys():
-        result = run_single_model(model_key, patient_id, epochs, device)
+        # 不传具体参数，让每个模型使用MODEL_CONFIG中的默认配置
+        result = run_single_model(model_key, patient_id, None, None, None, None, device)
         if result:
             results.append(result)
         print("\n" + "="*60 + "\n")
@@ -125,14 +172,18 @@ def run_all_models(patient_id, epochs=15, device=None):
     return results
 
 
-def run_multi_patient(model_key, patient_ids, epochs=15, device=None):
+def run_multi_patient(model_key, patient_ids, epochs=None, lr=None, 
+                      batch_size=None, weight_decay=None, device=None):
     """
     在多个患者上运行单个模型。
     
     参数:
         model_key: 模型标识
         patient_ids: 患者ID列表
-        epochs: 训练轮数
+        epochs: 训练轮数（默认从MODEL_CONFIG读取）
+        lr: 学习率（默认从MODEL_CONFIG读取）
+        batch_size: 批次大小（默认从MODEL_CONFIG读取）
+        weight_decay: 权重衰减（默认从MODEL_CONFIG读取）
         device: 计算设备
         
     返回:
@@ -145,7 +196,7 @@ def run_multi_patient(model_key, patient_ids, epochs=15, device=None):
         print(f"Processing patient: {patient_id}")
         print(f"{'#'*60}")
         
-        result = run_single_model(model_key, patient_id, epochs, device)
+        result = run_single_model(model_key, patient_id, epochs, lr, batch_size, weight_decay, device)
         if result:
             all_results.append(result)
     
@@ -197,8 +248,14 @@ Examples:
   # Run specific model on all available patients
   python run_baselines.py --model transformer --mode all
   
-  # Run with custom epochs
+  # Run with custom epochs (override MODEL_CONFIG)
   python run_baselines.py --model cnn_lstm --patient chb01 --epochs 20
+  
+  # Run with custom hyperparameters
+  python run_baselines.py --model transformer --patient chb01 --epochs 30 --lr 0.0001 --batch-size 32
+  
+  # Use model-specific defaults from MODEL_CONFIG
+  python run_baselines.py --model all --patient chb01
         """
     )
     
@@ -228,8 +285,29 @@ Examples:
     parser.add_argument(
         "--epochs", 
         type=int, 
-        default=15,
-        help="Number of training epochs (default: 15)"
+        default=None,
+        help="Number of training epochs (default: from MODEL_CONFIG)"
+    )
+    
+    parser.add_argument(
+        "--lr", 
+        type=float, 
+        default=None,
+        help="Learning rate (default: from MODEL_CONFIG)"
+    )
+    
+    parser.add_argument(
+        "--batch-size", 
+        type=int, 
+        default=None,
+        help="Batch size (default: from MODEL_CONFIG)"
+    )
+    
+    parser.add_argument(
+        "--weight-decay", 
+        type=float, 
+        default=None,
+        help="Weight decay (default: from MODEL_CONFIG)"
     )
     
     parser.add_argument(
@@ -255,7 +333,15 @@ Examples:
         device = "cuda" if torch.cuda.is_available() else "cpu"
     
     print(f"[Config] Device: {device}")
-    print(f"[Config] Epochs: {args.epochs}")
+    if args.epochs:
+        print(f"[Config] Override epochs: {args.epochs}")
+    if args.lr:
+        print(f"[Config] Override lr: {args.lr}")
+    if args.batch_size:
+        print(f"[Config] Override batch_size: {args.batch_size}")
+    if args.weight_decay:
+        print(f"[Config] Override weight_decay: {args.weight_decay}")
+    print(f"[Info] Using MODEL_CONFIG defaults if not overridden")
     
     # 准备数据
     if args.prepare_data:
@@ -279,14 +365,14 @@ Examples:
     all_results = []
     
     if args.model == "all":
-        # 在所有患者上运行所有模型
+        # 在所有患者上运行所有模型（每个模型使用各自的MODEL_CONFIG配置）
         for patient_id in patient_ids:
-            results = run_all_models(patient_id, args.epochs, device)
+            results = run_all_models(patient_id, args.epochs, args.lr, args.batch_size, args.weight_decay, device)
             all_results.extend(results)
     else:
         # 在指定患者上运行单个模型
         for patient_id in patient_ids:
-            result = run_single_model(args.model, patient_id, args.epochs, device)
+            result = run_single_model(args.model, patient_id, args.epochs, args.lr, args.batch_size, args.weight_decay, device)
             if result:
                 all_results.append(result)
     

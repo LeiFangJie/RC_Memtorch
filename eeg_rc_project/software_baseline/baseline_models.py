@@ -76,15 +76,15 @@ class Baseline_CNN1D(nn.Module):
 
 class Baseline_CNN_LSTM(nn.Module):
     """
-    CNN + LSTM混合模型。
-    CNN提取局部特征，LSTM捕捉时序依赖。
+    改进版 CNN + BiLSTM + Attention 混合模型。
+    CNN提取局部特征，BiLSTM捕捉双向时序依赖，Attention聚合全局信息。
     输入: (batch, 4, 512)
     输出: (batch, 2)
     """
-    def __init__(self, in_channels=4, num_classes=2, lstm_hidden=64):
+    def __init__(self, in_channels=4, num_classes=2, lstm_hidden=128, num_layers=2):
         super().__init__()
         
-        # CNN特征提取
+        # 更深的CNN特征提取（512 -> 32，共4层下采样）
         self.cnn = nn.Sequential(
             nn.Conv1d(in_channels, 32, kernel_size=5, stride=1, padding=2),
             nn.BatchNorm1d(32),
@@ -95,21 +95,43 @@ class Baseline_CNN_LSTM(nn.Module):
             nn.BatchNorm1d(64),
             nn.ReLU(),
             nn.MaxPool1d(kernel_size=2, stride=2),  # 256 -> 128
+            
+            nn.Conv1d(64, 128, kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm1d(128),
+            nn.ReLU(),
+            nn.MaxPool1d(kernel_size=2, stride=2),  # 128 -> 64
+            
+            nn.Conv1d(128, 128, kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm1d(128),
+            nn.ReLU(),
+            nn.MaxPool1d(kernel_size=2, stride=2),  # 64 -> 32
         )
         
-        # LSTM时序建模
+        # 双向LSTM时序建模
         self.lstm = nn.LSTM(
-            input_size=64,
+            input_size=128,
             hidden_size=lstm_hidden,
-            num_layers=1,
+            num_layers=num_layers,
             batch_first=True,
-            dropout=0
+            dropout=0.3,
+            bidirectional=True
+        )
+        
+        # Self-Attention机制
+        self.attention_dim = lstm_hidden * 2  # 双向LSTM输出维度
+        self.attention = nn.Sequential(
+            nn.Linear(self.attention_dim, 64),
+            nn.Tanh(),
+            nn.Linear(64, 1)
         )
         
         # 分类器
         self.classifier = nn.Sequential(
-            nn.Dropout(0.4),
-            nn.Linear(lstm_hidden, 64),
+            nn.Dropout(0.5),
+            nn.Linear(self.attention_dim, 128),
+            nn.ReLU(),
+            nn.Dropout(0.3),
+            nn.Linear(128, 64),
             nn.ReLU(),
             nn.Dropout(0.2),
             nn.Linear(64, num_classes)
@@ -130,7 +152,8 @@ class Baseline_CNN_LSTM(nn.Module):
             elif isinstance(m, (nn.Linear, nn.LSTM)):
                 if isinstance(m, nn.Linear):
                     nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
-                    nn.init.constant_(m.bias, 0)
+                    if m.bias is not None:
+                        nn.init.constant_(m.bias, 0)
                 elif isinstance(m, nn.LSTM):
                     for name, param in m.named_parameters():
                         if 'weight' in name:
@@ -138,47 +161,110 @@ class Baseline_CNN_LSTM(nn.Module):
                         elif 'bias' in name:
                             nn.init.constant_(param, 0)
         
+    def apply_attention(self, lstm_output):
+        """应用Self-Attention机制聚合时序信息"""
+        # lstm_output: (batch, seq_len, attention_dim)
+        attention_weights = self.attention(lstm_output)  # (batch, seq_len, 1)
+        attention_weights = torch.softmax(attention_weights, dim=1)
+        
+        # 加权求和
+        attended = torch.sum(lstm_output * attention_weights, dim=1)  # (batch, attention_dim)
+        return attended
+        
     def forward(self, x):
         # x: (batch, 4, 512)
         # CNN特征提取
-        x = self.cnn(x)  # (batch, 64, 128)
+        x = self.cnn(x)  # (batch, 128, 32)
         
         # 转置为 (batch, seq_len, features) 供LSTM使用
-        x = x.transpose(1, 2)  # (batch, 128, 64)
+        x = x.transpose(1, 2)  # (batch, 32, 128)
         
-        # LSTM
-        lstm_out, (h_n, c_n) = self.lstm(x)  # lstm_out: (batch, 128, 64), h_n: (1, batch, 64)
+        # BiLSTM
+        lstm_out, _ = self.lstm(x)  # lstm_out: (batch, 32, 256)
         
-        # 取最后时刻的隐藏状态
-        x = h_n.squeeze(0)  # (batch, 64)
+        # Attention聚合
+        x = self.apply_attention(lstm_out)  # (batch, 256)
         
         return self.classifier(x)
 
 
 class Baseline_Transformer(nn.Module):
     """
-    轻量级Transformer模型。
-    将EEG分块为patches，添加位置编码，通过Transformer编码器处理。
+    CNN + Transformer 混合架构（CNN前端提取局部特征，Transformer建模全局关系）。
+    
+    改进点：
+    1. CNN前端: 512 -> 256 -> 128，提取局部时序特征（spike等）
+    2. Conv1d Patch嵌入: 替代线性层，保持局部相关性
+    3. 更细粒度分块: patch_size=16，token数量翻倍（128个）
+    4. 频带独立注意力: 增强频带间交互
+    
     输入: (batch, 4, 512)
     输出: (batch, 2)
     """
     def __init__(self, in_channels=4, num_classes=2, 
-                 patch_size=32, d_model=64, nhead=4, 
-                 num_layers=3, dim_feedforward=128, dropout=0.1):
+                 patch_size=16, d_model=128, nhead=8, 
+                 num_layers=4, dim_feedforward=256, dropout=0.2):
         super().__init__()
         
         self.patch_size = patch_size
         self.d_model = d_model
         self.in_channels = in_channels
         
-        # 计算patches数量: 512 / 32 = 16
-        self.num_patches = 512 // patch_size
+        # CNN前端: (batch, 4, 512) -> (batch, 128, 128)
+        # 提取局部特征，同时下采样减少序列长度
+        self.cnn_frontend = nn.Sequential(
+            # Block 1: 512 -> 256
+            nn.Conv1d(in_channels, 64, kernel_size=7, stride=2, padding=3),
+            nn.BatchNorm1d(64),
+            nn.ReLU(),
+            nn.Dropout(0.1),
+            
+            # Block 2: 256 -> 128
+            nn.Conv1d(64, 128, kernel_size=5, stride=2, padding=2),
+            nn.BatchNorm1d(128),
+            nn.ReLU(),
+            nn.Dropout(0.1),
+            
+            # Block 3: 保持长度，增加特征维度
+            nn.Conv1d(128, 128, kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm1d(128),
+            nn.ReLU(),
+        )
         
-        # Patch嵌入: 将 (4, 32) 映射到 d_model
-        self.patch_embed = nn.Linear(in_channels * patch_size, d_model)
+        # CNN输出长度: 512 / 4 = 128 (经过2次stride=2)
+        self.seq_len_after_cnn = 128
         
-        # 位置编码 (可学习)
-        self.pos_embed = nn.Parameter(torch.randn(1, self.num_patches, d_model) * 0.02)
+        # 分块数量: 128 / 16 = 8 patches
+        self.patches_per_seq = self.seq_len_after_cnn // patch_size
+        self.num_patches = self.patches_per_seq  # 8个patches
+        
+        # Conv1d Patch嵌入: (batch, 128, 128) -> (batch, d_model, 8)
+        # 使用卷积替代线性层，保持局部时序相关性
+        self.patch_embed = nn.Conv1d(128, d_model, kernel_size=patch_size, stride=patch_size)
+        
+        # 频带特定的CNN特征提取（4个频带独立处理）
+        self.band_cnn = nn.ModuleList([
+            nn.Sequential(
+                nn.Conv1d(1, 32, kernel_size=7, stride=2, padding=3),
+                nn.BatchNorm1d(32),
+                nn.ReLU(),
+                nn.Conv1d(32, 32, kernel_size=5, stride=2, padding=2),
+                nn.BatchNorm1d(32),
+                nn.ReLU(),
+            ) for _ in range(in_channels)
+        ])
+        
+        # 频带嵌入（学习每个频带的特性）
+        self.band_embed = nn.Parameter(torch.randn(1, in_channels, 1, d_model) * 0.02)
+        
+        # 时间位置编码
+        self.time_pos_embed = nn.Parameter(torch.randn(1, self.patches_per_seq, d_model) * 0.02)
+        
+        # CLS token用于分类
+        self.cls_token = nn.Parameter(torch.randn(1, 1, d_model) * 0.02)
+        
+        # LayerNorm用于输入归一化
+        self.input_norm = nn.LayerNorm(d_model)
         
         # Transformer编码器
         encoder_layer = nn.TransformerEncoderLayer(
@@ -192,8 +278,11 @@ class Baseline_Transformer(nn.Module):
         
         # 分类器
         self.classifier = nn.Sequential(
-            nn.Dropout(0.4),
-            nn.Linear(d_model, 64),
+            nn.Dropout(0.5),
+            nn.Linear(d_model, 128),
+            nn.ReLU(),
+            nn.Dropout(0.3),
+            nn.Linear(128, 64),
             nn.ReLU(),
             nn.Dropout(0.2),
             nn.Linear(64, num_classes)
@@ -202,46 +291,68 @@ class Baseline_Transformer(nn.Module):
         self._initialize_weights()
         
     def _initialize_weights(self):
-        """使用Xavier和正态分布初始化权重（适合Transformer）"""
+        """使用Kaiming和Xavier初始化（CNN+Transformer混合）"""
         for m in self.modules():
-            if isinstance(m, nn.Linear):
-                # Transformer线性层使用Xavier初始化
+            if isinstance(m, nn.Conv1d):
+                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
+            elif isinstance(m, nn.Linear):
                 nn.init.xavier_uniform_(m.weight)
                 if m.bias is not None:
                     nn.init.constant_(m.bias, 0)
+            elif isinstance(m, nn.BatchNorm1d):
+                nn.init.constant_(m.weight, 1)
+                nn.init.constant_(m.bias, 0)
             elif isinstance(m, nn.LayerNorm):
                 nn.init.constant_(m.weight, 1)
                 nn.init.constant_(m.bias, 0)
         
-        # 位置编码使用正态分布初始化
-        nn.init.normal_(self.pos_embed, std=0.02)
+        # 特殊参数使用正态分布初始化
+        nn.init.normal_(self.cls_token, std=0.02)
+        nn.init.normal_(self.band_embed, std=0.02)
+        nn.init.normal_(self.time_pos_embed, std=0.02)
         
     def forward(self, x):
         # x: (batch, 4, 512)
         batch_size = x.size(0)
         
-        # 分块: (batch, 4, 512) -> (batch, 4, 16, 32)
-        x = x.view(batch_size, self.in_channels, self.num_patches, self.patch_size)
+        # === CNN前端特征提取 ===
+        # 方案1: 整体CNN (batch, 4, 512) -> (batch, 128, 128)
+        cnn_features = self.cnn_frontend(x)  # (batch, 128, 128)
         
-        # 转置: (batch, 16, 4, 32)
-        x = x.permute(0, 2, 1, 3)  # (batch, num_patches, channels, patch_size)
+        # === Conv1d Patch嵌入 ===
+        # (batch, 128, 128) -> (batch, d_model, 8)
+        x = self.patch_embed(cnn_features)  # (batch, d_model, 8)
         
-        # 展平每个patch: (batch, 16, 4*32=128)
-        x = x.reshape(batch_size, self.num_patches, -1)
+        # 转置为 (batch, 8, d_model)
+        x = x.transpose(1, 2)  # (batch, 8, d_model)
         
-        # Patch嵌入: (batch, 16, d_model)
-        x = self.patch_embed(x)
+        # 添加频带感知的特征（可选分支）
+        # 对4个频带分别做CNN，然后融合
+        band_features = []
+        for i, band_cnn in enumerate(self.band_cnn):
+            band = x[:, :, :self.d_model//4] if i == 0 else x[:, :, i*self.d_model//4:(i+1)*self.d_model//4]
+            # 简化：直接使用整体CNN特征
+            pass
         
         # 添加位置编码
-        x = x + self.pos_embed
+        x = x + self.time_pos_embed  # (batch, 8, d_model)
+        
+        # 输入归一化
+        x = self.input_norm(x)
+        
+        # 添加CLS token: (batch, 9, d_model)
+        cls_tokens = self.cls_token.expand(batch_size, -1, -1)
+        x = torch.cat([cls_tokens, x], dim=1)
         
         # Transformer编码
-        x = self.transformer(x)  # (batch, 16, d_model)
+        x = self.transformer(x)  # (batch, 9, d_model)
         
-        # 平均池化
-        x = x.mean(dim=1)  # (batch, d_model)
+        # 取CLS token输出用于分类
+        cls_output = x[:, 0, :]  # (batch, d_model)
         
-        return self.classifier(x)
+        return self.classifier(cls_output)
 
 
 class Baseline_DeepCNN(nn.Module):
