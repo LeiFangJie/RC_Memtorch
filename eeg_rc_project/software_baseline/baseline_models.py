@@ -437,6 +437,74 @@ class Baseline_DeepCNN(nn.Module):
         return self.classifier(x)
 
 
+class RC_CNN(nn.Module):
+    """
+    RC+CNN 架构中的 CNN 分类器部分。
+    输入 RC 储层提取的 1024 维特征， reshape 为 [4, 256] 后通过轻量级 CNN 分类。
+    
+    输入: (batch, 1024) - RC 特征
+    输出: (batch, 2) - 分类结果
+    """
+    def __init__(self, input_dim=1024, num_channels=4, seq_len=256, num_classes=2):
+        super().__init__()
+        self.num_channels = num_channels
+        self.seq_len = seq_len
+        
+        # 轻量级 CNN 特征提取
+        self.features = nn.Sequential(
+            # Input: [Batch, 4, 256]
+            nn.Conv1d(num_channels, 32, kernel_size=5, stride=1, padding=2),
+            nn.BatchNorm1d(32),
+            nn.ReLU(),
+            nn.MaxPool1d(kernel_size=2, stride=2),  # 256 -> 128
+            
+            nn.Conv1d(32, 64, kernel_size=5, stride=1, padding=2),
+            nn.BatchNorm1d(64),
+            nn.ReLU(),
+            nn.MaxPool1d(kernel_size=2, stride=2),  # 128 -> 64
+            
+            nn.Conv1d(64, 128, kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm1d(128),
+            nn.ReLU(),
+            nn.AdaptiveAvgPool1d(1)  # 64 -> 1
+        )
+        
+        self.classifier = nn.Sequential(
+            nn.Dropout(0.4),
+            nn.Linear(128, 64),
+            nn.ReLU(),
+            nn.Dropout(0.2),
+            nn.Linear(64, num_classes)
+        )
+        
+        self._initialize_weights()
+    
+    def _initialize_weights(self):
+        """使用Kaiming初始化权重"""
+        for m in self.modules():
+            if isinstance(m, nn.Conv1d):
+                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
+            elif isinstance(m, nn.BatchNorm1d):
+                nn.init.constant_(m.weight, 1)
+                nn.init.constant_(m.bias, 0)
+            elif isinstance(m, nn.Linear):
+                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
+    
+    def forward(self, x):
+        # x: (batch, 1024) - RC 特征
+        batch_size = x.size(0)
+        # Reshape to [Batch, 4, 256]
+        x = x.view(batch_size, self.num_channels, self.seq_len)
+        
+        x = self.features(x)
+        x = x.view(batch_size, -1)  # (batch, 128)
+        return self.classifier(x)
+
+
 def count_parameters(model):
     """计算模型可训练参数数量"""
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
@@ -447,19 +515,19 @@ if __name__ == "__main__":
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     
     models = {
-        "Baseline_CNN1D": Baseline_CNN1D(),
-        "Baseline_CNN_LSTM": Baseline_CNN_LSTM(),
-        "Baseline_Transformer": Baseline_Transformer(),
-        "Baseline_DeepCNN": Baseline_DeepCNN()
+        "Baseline_CNN1D": (Baseline_CNN1D(), torch.randn(2, 4, 512)),
+        "Baseline_CNN_LSTM": (Baseline_CNN_LSTM(), torch.randn(2, 4, 512)),
+        "Baseline_Transformer": (Baseline_Transformer(), torch.randn(2, 4, 512)),
+        "Baseline_DeepCNN": (Baseline_DeepCNN(), torch.randn(2, 4, 512)),
+        "RC_CNN": (RC_CNN(), torch.randn(2, 1024))  # RC_CNN 输入是 1024 维特征
     }
     
-    dummy_input = torch.randn(2, 4, 512).to(device)
-    
     print("Model Parameter Counts:")
-    print("-" * 50)
-    for name, model in models.items():
+    print("-" * 60)
+    for name, (model, dummy_input) in models.items():
         model = model.to(device)
+        dummy_input = dummy_input.to(device)
         params = count_parameters(model)
         output = model(dummy_input)
-        print(f"{name:25s}: {params:>10,} params | Output shape: {output.shape}")
-    print("-" * 50)
+        print(f"{name:25s}: {params:>10,} params | Input: {dummy_input.shape} | Output: {output.shape}")
+    print("-" * 60)

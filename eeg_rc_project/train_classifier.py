@@ -11,6 +11,7 @@ from torch.utils.data import Dataset, DataLoader, WeightedRandomSampler
 import numpy as np
 from config import *
 import random
+import copy
 from sklearn.metrics import precision_score, recall_score, f1_score, confusion_matrix
 import matplotlib.pyplot as plt
 import seaborn as sns
@@ -269,6 +270,10 @@ def train_model():
     np.random.seed(42)
     random.seed(42)
     
+    # 确保CUDA运算的确定性（关闭非确定性算法）
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+    
     # Check available files
     available_patients = []
     for f in os.listdir(PROCESSED_DATA_DIR):
@@ -294,12 +299,12 @@ def train_model():
     # 既然我们用了 WeightedRandomSampler 进行类别平衡采样，模型看到的 batches 已经是接近 1:1 的。
     # 此时不需要再用 Focal Loss 的 alpha 偏袒少数类（这会导致网络走向另一个极端，或者训练不稳定）。
     # 使用标准的 CrossEntropyLoss 配合重采样即可，或者保留 FocalLoss 但设 alpha=0.5
-    criterion = FocalLoss(alpha=0.5, gamma=2)
+    criterion = FocalLoss(alpha=0.5, gamma=1)
     
     # 降低学习率，加入权重衰减防止过拟合
-    optimizer = optim.Adam(model.parameters(), lr=0.0005, weight_decay=1e-4)
+    optimizer = optim.Adam(model.parameters(), lr=0.0001, weight_decay=1e-4)
     
-    epochs = 15
+    epochs = 30
     
     if is_single_patient:
         print("--- Single Patient Mode: Window-based random split ---")
@@ -341,6 +346,10 @@ def train_model():
         train_loader = DataLoader(train_dataset, batch_size=256, sampler=sampler)
         test_loader = DataLoader(test_dataset, batch_size=256, shuffle=False)
         
+        # 追踪最佳F1分数
+        best_f1 = 0.0
+        best_epoch = 0
+        
         for epoch in range(epochs):
             model.train()
             total_loss = 0
@@ -364,8 +373,25 @@ def train_model():
                 
             print(f"Epoch {epoch+1} Train Loss: {total_loss/len(train_loader):.4f}, Train Acc: {100.*correct/total:.2f}%")
             
-            # Evaluate
-            evaluate_model(model, test_loader, device, epoch, epochs)
+            # Evaluate and track best F1
+            current_f1 = evaluate_model(model, test_loader, device, epoch, epochs, is_best=False)
+            
+            # 更新最佳F1
+            if current_f1 > best_f1:
+                best_f1 = current_f1
+                best_epoch = epoch + 1
+                # 保存最佳模型状态（深拷贝避免后续训练污染）
+                best_model_state = copy.deepcopy(model.state_dict())
+                print(f"  *** New best F1: {best_f1:.4f} at Epoch {best_epoch} ***")
+            
+        # 训练结束，加载并保存最佳模型
+        if best_f1 > 0:
+            model.load_state_dict(best_model_state)
+            print(f"\n{'='*50}")
+            print(f"Training Complete - Loading Best Model (Epoch {best_epoch}, F1={best_f1:.4f})")
+            print(f"{'='*50}\n")
+            # 最终评估并保存最佳模型
+            evaluate_model(model, test_loader, device, best_epoch-1, epochs, is_best=True)
             
     else:
         print("--- Full Dataset Mode: Chunk-based Patient Streaming Training ---")
@@ -378,6 +404,10 @@ def train_model():
         # 测试集可以保持流式加载，因为只是前向传播，不保存计算图，OOM 风险低
         test_dataset = PatientStreamingDataset(test_patients)
         test_loader = DataLoader(test_dataset, batch_size=256, shuffle=False)
+        
+        # 追踪最佳F1分数
+        best_f1 = 0.0
+        best_epoch = 0
         
         for epoch in range(epochs):
             model.train()
@@ -424,8 +454,25 @@ def train_model():
                     epoch_batches += 1
             
             print(f"Epoch {epoch+1} Train Loss: {epoch_loss/epoch_batches if epoch_batches > 0 else 0:.4f}")
-            # Evaluate
-            evaluate_model(model, test_loader, device, epoch, epochs)
+            # Evaluate and track best F1
+            current_f1 = evaluate_model(model, test_loader, device, epoch, epochs, is_best=False)
+            
+            # 更新最佳F1
+            if current_f1 > best_f1:
+                best_f1 = current_f1
+                best_epoch = epoch + 1
+                # 保存最佳模型状态（深拷贝避免后续训练污染）
+                best_model_state = copy.deepcopy(model.state_dict())
+                print(f"  *** New best F1: {best_f1:.4f} at Epoch {best_epoch} ***")
+            
+        # 训练结束，加载并保存最佳模型
+        if best_f1 > 0:
+            model.load_state_dict(best_model_state)
+            print(f"\n{'='*50}")
+            print(f"Training Complete - Loading Best Model (Epoch {best_epoch}, F1={best_f1:.4f})")
+            print(f"{'='*50}\n")
+            # 最终评估并保存最佳模型
+            evaluate_model(model, test_loader, device, best_epoch-1, epochs, is_best=True)
             
     print("Training complete.")
 
@@ -452,7 +499,7 @@ def smooth_predictions(preds, window_size=5):
             smoothed[i] = 0
     return smoothed
 
-def evaluate_model(model, test_loader, device, epoch, epochs):
+def evaluate_model(model, test_loader, device, epoch, epochs, is_best=False):
     model.eval()
     all_preds = []
     all_labels = []
@@ -485,15 +532,18 @@ def evaluate_model(model, test_loader, device, epoch, epochs):
     print(f"  F1 Score:  {s_f1:.4f}")
     print(f"  Smoothed Confusion Matrix:\n{s_cm}\n")
     
-    # Plot smoothed confusion matrix at the last epoch
-    if epoch == epochs - 1:
+    # Plot smoothed confusion matrix at the last epoch or when saving best model
+    if epoch == epochs - 1 or is_best:
         cm_save_path = os.path.join(PLOTS_DIR, "confusion_matrix.png")
         plot_confusion_matrix_figure(s_cm, cm_save_path)
     
-    # Save the trained model
-    model_save_path = os.path.join(PROCESSED_DATA_DIR, "fc_model.pth")
-    torch.save(model.state_dict(), model_save_path)
-    print(f"Model saved to {model_save_path}")
+    # Save the trained model (only if it's the best)
+    if is_best:
+        model_save_path = os.path.join(PROCESSED_DATA_DIR, "fc_model.pth")
+        torch.save(model.state_dict(), model_save_path)
+        print(f"Best model saved to {model_save_path} (F1={s_f1:.4f})")
+    
+    return s_f1
 
 if __name__ == "__main__":
     train_model()

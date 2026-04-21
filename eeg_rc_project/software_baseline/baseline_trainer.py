@@ -55,6 +55,36 @@ class BandsDataset(Dataset):
         return self.features[idx], self.labels[idx]
 
 
+class RC_FeaturesDataset(Dataset):
+    """
+    RC 储层特征数据集。
+    加载 {patient_id}_features.pt 文件（RC 储层提取的 1024 维特征）。
+    """
+    def __init__(self, patient_id, indices=None):
+        feat_path = os.path.join(PROCESSED_DATA_DIR, f"{patient_id}_features.pt")
+        if not os.path.exists(feat_path):
+            raise FileNotFoundError(f"RC features not found: {feat_path}\n"
+                                    f"Please run: python rc_feature_extractor.py")
+            
+        self.features, self.labels = torch.load(feat_path)
+        
+        if indices is not None:
+            self.features = self.features[indices]
+            self.labels = self.labels[indices]
+            
+        # 打印数据分布
+        total_1 = self.labels.sum().item()
+        total_0 = len(self.labels) - total_1
+        print(f"[RC Dataset] {patient_id} - Size: {len(self.labels)} (Normal: {total_0}, Seizure: {total_1})")
+        print(f"[RC Dataset] Feature shape: {self.features.shape}")
+
+    def __len__(self):
+        return len(self.labels)
+
+    def __getitem__(self, idx):
+        return self.features[idx], self.labels[idx]
+
+
 class FocalLoss(nn.Module):
     """
     Focal Loss for imbalanced classification.
@@ -129,11 +159,36 @@ def train_epoch(model, train_loader, criterion, optimizer, device):
     return avg_loss, accuracy
 
 
-def evaluate(model, test_loader, device):
+def smooth_predictions(preds, window_size=5):
+    """
+    对预测结果进行滑动窗口多数投票平滑处理。
+    与主流程 (train_classifier.py) 完全一致。
+    
+    参数:
+        preds (list or ndarray): 原始预测标签序列
+        window_size (int): 滑动窗口大小，必须为奇数
+    返回:
+        ndarray: 平滑后的预测标签序列
+    """
+    smoothed = np.copy(preds)
+    pad = window_size // 2
+    for i in range(len(preds)):
+        start = max(0, i - pad)
+        end = min(len(preds), i + pad + 1)
+        if np.mean(preds[start:end]) > 0.5:
+            smoothed[i] = 1
+        else:
+            smoothed[i] = 0
+    return smoothed
+
+
+def evaluate(model, test_loader, device, use_smoothing=False):
     """
     评估模型性能。
     返回: f1, precision, recall, predictions, labels
-    注意：不使用平滑后处理（与主流程不同）
+    
+    参数:
+        use_smoothing: 是否使用窗平滑后处理（RC_CNN 使用，与主流程一致）
     """
     model.eval()
     all_preds = []
@@ -151,7 +206,12 @@ def evaluate(model, test_loader, device):
     all_preds = np.array(all_preds)
     all_labels = np.array(all_labels)
     
-    # 计算指标（无平滑）
+    # 对于 RC_CNN，使用窗平滑后处理（与主流程一致，window_size=5）
+    if use_smoothing:
+        all_preds = smooth_predictions(all_preds, window_size=5)
+        print(f"[Eval] Applied window smoothing (size=5)")
+    
+    # 计算指标
     f1 = f1_score(all_labels, all_preds, zero_division=0)
     precision = precision_score(all_labels, all_preds, zero_division=0)
     recall = recall_score(all_labels, all_preds, zero_division=0)
@@ -189,15 +249,28 @@ def train_baseline(model_class, model_name, patient_id, epochs=15, lr=0.0005,
     np.random.seed(42)
     random.seed(42)
     
-    # 加载数据
-    bands_path = os.path.join(PROCESSED_DATA_DIR, f"{patient_id}_bands.pt")
-    if not os.path.exists(bands_path):
-        print(f"[Error] Bands data not found: {bands_path}")
-        print(f"Please run: python band_decomposition.py --patient {patient_id}")
-        return None
+    # 判断是否为 RC_CNN 模型（使用 RC 特征）
+    is_rc_model = "RC_CNN" in model_name or "rc" in model_name.lower()
     
-    # 加载完整数据以进行分层分割
-    full_features, full_labels = torch.load(bands_path)
+    # 加载数据
+    if is_rc_model:
+        # RC_CNN 使用 RC 储层提取的特征
+        feat_path = os.path.join(PROCESSED_DATA_DIR, f"{patient_id}_features.pt")
+        if not os.path.exists(feat_path):
+            print(f"[Error] RC features not found: {feat_path}")
+            print(f"Please run: python rc_feature_extractor.py")
+            return None
+        full_features, full_labels = torch.load(feat_path)
+        print(f"[Data] Loaded RC features: {full_features.shape}")
+    else:
+        # 其他模型使用频带分解数据
+        bands_path = os.path.join(PROCESSED_DATA_DIR, f"{patient_id}_bands.pt")
+        if not os.path.exists(bands_path):
+            print(f"[Error] Bands data not found: {bands_path}")
+            print(f"Please run: python band_decomposition.py --patient {patient_id}")
+            return None
+        full_features, full_labels = torch.load(bands_path)
+    
     total_samples = len(full_labels)
     
     # 分层抽样：8:2划分
@@ -220,12 +293,16 @@ def train_baseline(model_class, model_name, patient_id, epochs=15, lr=0.0005,
     ])
     
     np.random.shuffle(train_indices)
-    # 测试集排序（与主流程一致，虽然基线不使用平滑）
+    # 测试集排序（恢复时间序列顺序，RC_CNN 的窗平滑后处理需要）
     test_indices = np.sort(test_indices)
     
     # 创建数据集
-    train_dataset = BandsDataset(patient_id, indices=train_indices)
-    test_dataset = BandsDataset(patient_id, indices=test_indices)
+    if is_rc_model:
+        train_dataset = RC_FeaturesDataset(patient_id, indices=train_indices)
+        test_dataset = RC_FeaturesDataset(patient_id, indices=test_indices)
+    else:
+        train_dataset = BandsDataset(patient_id, indices=train_indices)
+        test_dataset = BandsDataset(patient_id, indices=test_indices)
     
     # 创建WeightedRandomSampler处理类别不平衡
     train_labels = train_dataset.labels
@@ -252,7 +329,9 @@ def train_baseline(model_class, model_name, patient_id, epochs=15, lr=0.0005,
     
     # 计算参数量和FLOPs
     params_count = sum(p.numel() for p in model.parameters() if p.requires_grad)
-    flops, _ = compute_flops(model, input_shape=(1, 4, 512))
+    # RC_CNN 输入是 1024 维特征，其他模型输入是 (4, 512)
+    input_shape = (1, 1024) if is_rc_model else (1, 4, 512)
+    flops, _ = compute_flops(model, input_shape=input_shape)
     
     print(f"[Model] Parameters: {params_count:,}")
     if flops:
@@ -271,8 +350,8 @@ def train_baseline(model_class, model_name, patient_id, epochs=15, lr=0.0005,
         print(f"[Checkpoint] Loading checkpoint and skipping training...")
         model.load_state_dict(torch.load(checkpoint_path, map_location=device), strict=False)
         
-        # 直接进行评估
-        final_f1, final_precision, final_recall, _, _ = evaluate(model, test_loader, device)
+        # 直接进行评估（RC_CNN 使用平滑后处理）
+        final_f1, final_precision, final_recall, _, _ = evaluate(model, test_loader, device, use_smoothing=is_rc_model)
         
         print(f"[Results] F1: {final_f1:.4f} | Precision: {final_precision:.4f} | Recall: {final_recall:.4f}")
         print(f"[Checkpoint] Training skipped. Loaded from checkpoint.")
@@ -304,8 +383,8 @@ def train_baseline(model_class, model_name, patient_id, epochs=15, lr=0.0005,
     for epoch in range(epochs):
         train_loss, train_acc = train_epoch(model, train_loader, criterion, optimizer, device)
         
-        # 评估
-        f1, precision, recall, _, _ = evaluate(model, test_loader, device)
+        # 评估（RC_CNN 使用平滑后处理）
+        f1, precision, recall, _, _ = evaluate(model, test_loader, device, use_smoothing=is_rc_model)
         
         # 保存最佳模型
         if f1 > best_f1:
@@ -313,6 +392,7 @@ def train_baseline(model_class, model_name, patient_id, epochs=15, lr=0.0005,
             os.makedirs(os.path.dirname(checkpoint_path), exist_ok=True)
             torch.save(model.state_dict(), checkpoint_path)
         
+        # 打印指标（RC_CNN 显示平滑后指标）
         if (epoch + 1) % 5 == 0 or epoch == 0:
             print(f"Epoch {epoch+1:2d}/{epochs} | Loss: {train_loss:.4f} | "
                   f"Train Acc: {train_acc:.2f}% | F1: {f1:.4f} | "
@@ -320,10 +400,10 @@ def train_baseline(model_class, model_name, patient_id, epochs=15, lr=0.0005,
     
     training_time = time.time() - start_time
     
-    # 最终评估
+    # 最终评估（RC_CNN 使用平滑后处理）
     print(f"\n[Final Evaluation] Loading best model...")
     model.load_state_dict(torch.load(checkpoint_path, map_location=device), strict=False)
-    final_f1, final_precision, final_recall, _, _ = evaluate(model, test_loader, device)
+    final_f1, final_precision, final_recall, _, _ = evaluate(model, test_loader, device, use_smoothing=is_rc_model)
     
     print(f"[Results] F1: {final_f1:.4f} | Precision: {final_precision:.4f} | Recall: {final_recall:.4f}")
     print(f"[Time] Training completed in {training_time:.2f}s")

@@ -19,6 +19,7 @@ from baseline_models import (
     Baseline_CNN_LSTM, 
     Baseline_Transformer, 
     Baseline_DeepCNN,
+    RC_CNN,
     count_parameters
 )
 from baseline_trainer import train_baseline, save_results_to_csv
@@ -32,6 +33,7 @@ MODEL_REGISTRY = {
     "cnn_lstm": (Baseline_CNN_LSTM, "Baseline_CNN_LSTM"),
     "transformer": (Baseline_Transformer, "Baseline_Transformer"),
     "deepcnn": (Baseline_DeepCNN, "Baseline_DeepCNN"),
+    "rc_cnn": (RC_CNN, "RC_CNN"),  # RC+CNN 架构（RC物理层 + 轻量级CNN分类器）
 }
 
 
@@ -59,6 +61,12 @@ MODEL_CONFIG = {
         "epochs": 50,
         "lr": 0.0005,
         "batch_size": 256,
+        "weight_decay": 1e-4,
+    },
+    "rc_cnn": {
+        "epochs": 50,      # 与主流程一致
+        "lr": 0.0005,      # 与主流程一致
+        "batch_size": 256, # 与主流程一致
         "weight_decay": 1e-4,
     },
 }
@@ -263,7 +271,7 @@ Examples:
         "--model", 
         type=str, 
         required=True,
-        choices=["cnn1d", "cnn_lstm", "transformer", "deepcnn", "all"],
+        choices=["cnn1d", "cnn_lstm", "transformer", "deepcnn", "rc_cnn", "all"],
         help="Model to run"
     )
     
