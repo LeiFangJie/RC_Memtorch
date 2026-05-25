@@ -40,7 +40,7 @@ MODEL_REGISTRY = {
 # 模型默认超参数配置 - 可在代码开头自定义每个模型的epochs等参数
 MODEL_CONFIG = {
     "cnn1d": {
-        "epochs": 20,
+        "epochs": 40,
         "lr": 0.0005,
         "batch_size": 256,
         "weight_decay": 1e-4,
@@ -58,7 +58,7 @@ MODEL_CONFIG = {
         "weight_decay": 1e-4,
     },
     "deepcnn": {
-        "epochs": 50,
+        "epochs": 60,
         "lr": 0.0005,
         "batch_size": 256,
         "weight_decay": 1e-4,

@@ -172,6 +172,20 @@ class ComplexFC(nn.Module):
             nn.Linear(hidden_dims[2], output_dim)
         )
         
+        # 权重初始化（Kaiming He初始化配合ReLU激活）
+        self._initialize_weights()
+        
+    def _initialize_weights(self):
+        """对网络中的线性层进行Kaiming He初始化"""
+        for m in self.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.kaiming_normal_(m.weight, mode='fan_in', nonlinearity='relu')
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
+            elif isinstance(m, nn.BatchNorm1d):
+                nn.init.constant_(m.weight, 1)
+                nn.init.constant_(m.bias, 0)
+        
     def forward(self, x):
         return self.net(x)
 
@@ -304,7 +318,7 @@ def train_model():
     # 降低学习率，加入权重衰减防止过拟合
     optimizer = optim.Adam(model.parameters(), lr=0.0001, weight_decay=1e-4)
     
-    epochs = 30
+    epochs = 20
     
     if is_single_patient:
         print("--- Single Patient Mode: Window-based random split ---")
