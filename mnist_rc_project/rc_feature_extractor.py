@@ -190,7 +190,7 @@ def visualize_features(raw_features, labels, save_path):
     print(f"Saved visualization to {save_path}")
 
 def main():
-    reservoir = MemristorReservoir(g_off, g_on, v_read)
+    reservoir = MemristorReservoir(g_off, g_on, v_read, sample_interval=7)
     
     # Train Data
     train_data_path = 'processed_data/mnist_spikes_train.pt'
