@@ -5,13 +5,36 @@
 3. 原始 RC 特征以及 FC 层隐层特征的 t-SNE 降维聚类散点图
 """
 import os
+
+os.environ.setdefault("LOKY_MAX_CPU_COUNT", "4")
+
 import torch
+import matplotlib
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 from config import *
 from sklearn.manifold import TSNE
 import random
 from train_classifier import CNN1DClassifier
+
+RANDOM_SEED = 42
+
+
+def set_random_seed(seed=RANDOM_SEED):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+
+
+def save_figure_with_svg(fig, save_path, **kwargs):
+    fig.savefig(save_path, **kwargs)
+    root, ext = os.path.splitext(save_path)
+    if ext.lower() != ".svg":
+        fig.savefig(f"{root}.svg", format="svg", **kwargs)
+
 
 def plot_multiple_spikes(spikes_list, labels_list, save_path, title_prefix):
     """
@@ -44,16 +67,21 @@ def plot_multiple_spikes(spikes_list, labels_list, save_path, title_prefix):
         ax.set_yticklabels(channel_labels)
         ax.set_xlim(0, 512)
         ax.set_ylim(0.5, 4.5)
-        ax.set_title(f"{title_prefix} Sample {i+1} (Label: {'Seizure' if label == 1 else 'Normal'})")
+        ax.set_title(
+            f"{title_prefix} Sample {i+1} (Label: {'Seizure' if label == 1 else 'Normal'})",
+            fontsize=13,
+            fontweight='bold',
+            pad=5,
+        )
         
         if i == n_samples - 1:
             ax.set_xlabel("Time Step")
         else:
             ax.set_xticks([])
             
-    fig.suptitle(f"{title_prefix} Spike Trains (Top 5 Samples)", fontsize=14, y=1.02)
-    plt.tight_layout()
-    plt.savefig(save_path, bbox_inches='tight')
+    fig.suptitle(f"{title_prefix} Spike Trains (Top 5 Samples)", fontsize=18, fontweight='bold', y=0.995)
+    fig.tight_layout(rect=[0, 0, 1, 0.965])
+    save_figure_with_svg(fig, save_path, bbox_inches='tight')
     plt.close()
 
 def plot_rc_dynamics_scatter(features_list, labels_list, save_path, title_prefix):
@@ -116,16 +144,21 @@ def plot_rc_dynamics_scatter(features_list, labels_list, save_path, title_prefix
         ax.spines['left'].set_visible(False)
         ax.tick_params(axis='y', length=0)
         
-        ax.set_title(f"{title_prefix} Sample {i+1} RC Dynamics (Label: {'Seizure' if label == 1 else 'Normal'})")
+        ax.set_title(
+            f"{title_prefix} Sample {i+1} RC Dynamics (Label: {'Seizure' if label == 1 else 'Normal'})",
+            fontsize=13,
+            fontweight='bold',
+            pad=5,
+        )
         
         if i == n_samples - 1:
             ax.set_xlabel("Sample Step")
         else:
             ax.set_xticks([])
             
-    fig.suptitle(f"{title_prefix} RC Dynamics (Top 5 Samples)", fontsize=14, y=1.02)
-    plt.tight_layout()
-    plt.savefig(save_path, bbox_inches='tight')
+    fig.suptitle(f"{title_prefix} RC Dynamics (Top 5 Samples)", fontsize=18, fontweight='bold', y=0.995)
+    fig.tight_layout(rect=[0, 0, 1, 0.965])
+    save_figure_with_svg(fig, save_path, bbox_inches='tight')
     plt.close()
     print(f"Saved RC dynamics scatter plot to {save_path}")
 def plot_multiple_rc_features(features_list, labels_list, save_path, title_prefix):
@@ -144,31 +177,35 @@ def plot_multiple_rc_features(features_list, labels_list, save_path, title_prefi
     if n_samples == 1:
         axes = [axes]
         
-    # Find global min/max for consistent colorbar
+    # Use a robust shared scale to avoid large saturated white/yellow regions.
     all_feats = torch.stack(features_list).view(n_samples, 4, -1).numpy()
-    vmin, vmax = all_feats.min(), all_feats.max()
+    vmin, vmax = np.percentile(all_feats, [1, 99])
     
     for i, ax in enumerate(axes):
         feat_map = all_feats[i]
         label = labels_list[i]
         
-        im = ax.imshow(feat_map, aspect='auto', cmap='hot', interpolation='nearest', vmin=vmin, vmax=vmax)
+        im = ax.imshow(feat_map, aspect='auto', cmap='magma', interpolation='nearest', vmin=vmin, vmax=vmax)
         ax.set_yticks([0, 1, 2, 3])
         ax.set_yticklabels(['Delta', 'Theta', 'Alpha', 'Beta'])
-        ax.set_title(f"{title_prefix} Sample {i+1} (Label: {'Seizure' if label == 1 else 'Normal'})")
+        ax.set_title(
+            f"{title_prefix} Sample {i+1} (Label: {'Seizure' if label == 1 else 'Normal'})",
+            fontsize=13,
+            fontweight='bold',
+            pad=5,
+        )
         
         if i == n_samples - 1:
             ax.set_xlabel("Sample Step")
         else:
             ax.set_xticks([])
             
-    # Add a single colorbar
-    fig.subplots_adjust(right=0.85)
+    fig.suptitle(f"{title_prefix} RC Feature Heatmaps (Top 5 Samples)", fontsize=18, fontweight='bold', y=0.995)
+    fig.tight_layout(rect=[0, 0, 0.85, 0.965])
     cbar_ax = fig.add_axes([0.88, 0.15, 0.04, 0.7])
-    fig.colorbar(im, cax=cbar_ax, label="Normalized RC State")
-    fig.suptitle(f"{title_prefix} RC Feature Heatmaps (Top 5 Samples)", fontsize=14, y=1.02)
+    fig.colorbar(im, cax=cbar_ax, label="RC State")
     
-    plt.savefig(save_path, bbox_inches='tight')
+    save_figure_with_svg(fig, save_path, bbox_inches='tight')
     plt.close()
 
 def _filter_active_bands(idx_list, data, mode='feature'):
@@ -229,10 +266,11 @@ def visualize_sample(patient_id, num_samples=5):
     if len(seizure_valid) < num_samples:
         print(f"Warning: Only {len(seizure_valid)} seizure samples have activity in all 4 bands (requested {num_samples}).")
     
-    # Select random samples from filtered pool
-    np.random.seed(42)
-    selected_normal = np.random.choice(normal_valid, min(num_samples, len(normal_valid)), replace=False) if len(normal_valid) > 0 else []
-    selected_seizure = np.random.choice(seizure_valid, min(num_samples, len(seizure_valid)), replace=False) if len(seizure_valid) > 0 else []
+    # Select reproducible random samples from the filtered pool.
+    set_random_seed(RANDOM_SEED)
+    rng = np.random.RandomState(RANDOM_SEED)
+    selected_normal = rng.choice(normal_valid, min(num_samples, len(normal_valid)), replace=False) if len(normal_valid) > 0 else []
+    selected_seizure = rng.choice(seizure_valid, min(num_samples, len(seizure_valid)), replace=False) if len(seizure_valid) > 0 else []
     
     if len(selected_normal) > 0:
         spikes_list = [spikes[i].numpy() for i in selected_normal]
@@ -284,18 +322,19 @@ def plot_clustering(patient_ids, max_samples_per_class=1000):
     normal_idx = np.where(all_labels == 0)[0]
     seizure_idx = np.where(all_labels == 1)[0]
     
-    np.random.seed(42)
+    set_random_seed(RANDOM_SEED)
+    rng = np.random.RandomState(RANDOM_SEED)
     if len(normal_idx) > max_samples_per_class:
-        normal_idx = np.random.choice(normal_idx, max_samples_per_class, replace=False)
+        normal_idx = rng.choice(normal_idx, max_samples_per_class, replace=False)
     if len(seizure_idx) > max_samples_per_class:
-        seizure_idx = np.random.choice(seizure_idx, max_samples_per_class, replace=False)
+        seizure_idx = rng.choice(seizure_idx, max_samples_per_class, replace=False)
         
     selected_idx = np.concatenate([normal_idx, seizure_idx])
     sampled_features = all_features[selected_idx]
     sampled_labels = all_labels[selected_idx]
     
     print(f"Running t-SNE on {len(sampled_features)} samples...")
-    tsne = TSNE(n_components=2, random_state=42)
+    tsne = TSNE(n_components=2, random_state=RANDOM_SEED)
     features_2d = tsne.fit_transform(sampled_features)
     
     plt.figure(figsize=(8, 6))
@@ -310,11 +349,12 @@ def plot_clustering(patient_ids, max_samples_per_class=1000):
     plt.scatter(features_2d[seizure_mask, 0], features_2d[seizure_mask, 1], 
                 c='red', label='Seizure', alpha=0.5, s=10)
                 
-    plt.title("t-SNE Clustering of Raw RC Features")
+    plt.title("t-SNE Clustering of Raw RC Features", fontsize=16, fontweight='bold')
     plt.legend()
     
     save_path = os.path.join(PLOTS_DIR, "clustering_tsne.png")
-    plt.savefig(save_path)
+    fig = plt.gcf()
+    save_figure_with_svg(fig, save_path)
     plt.close()
     print(f"Saved clustering visualization to {save_path}")
     
@@ -346,7 +386,7 @@ def plot_clustering(patient_ids, max_samples_per_class=1000):
             embeddings = hidden.cpu().numpy()
             
         print(f"Running t-SNE on {len(embeddings)} CNN embeddings...")
-        tsne_fc = TSNE(n_components=2, random_state=42)
+        tsne_fc = TSNE(n_components=2, random_state=RANDOM_SEED)
         embeddings_2d = tsne_fc.fit_transform(embeddings)
         
         plt.figure(figsize=(8, 6))
@@ -354,11 +394,12 @@ def plot_clustering(patient_ids, max_samples_per_class=1000):
                     c='blue', label='Normal', alpha=0.5, s=10)
         plt.scatter(embeddings_2d[seizure_mask, 0], embeddings_2d[seizure_mask, 1], 
                     c='red', label='Seizure', alpha=0.5, s=10)
-        plt.title("t-SNE Clustering of CNN Learned Embeddings (64D)")
+        plt.title("t-SNE Clustering of CNN Learned Embeddings (64D)", fontsize=16, fontweight='bold')
         plt.legend()
         
         fc_save_path = os.path.join(PLOTS_DIR, "clustering_tsne_cnn.png")
-        plt.savefig(fc_save_path)
+        fig = plt.gcf()
+        save_figure_with_svg(fig, fc_save_path)
         plt.close()
         print(f"Saved CNN embeddings clustering visualization to {fc_save_path}")
 
