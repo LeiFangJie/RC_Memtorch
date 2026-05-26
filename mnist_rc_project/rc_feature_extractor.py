@@ -147,7 +147,7 @@ def visualize_features(raw_features, labels, save_path):
     fig, axes = plt.subplots(10, 5, figsize=(15, 20)) # Adjusted height
     
     # Set global title
-    fig.suptitle('Memristor Reservoir Monitor Current (A)', fontsize=16)
+    fig.suptitle('Memristor Reservoir Normalized State', fontsize=16)
     
     # Determine global min/max for consistent colorbar
     vmin = raw_features.min().item()
@@ -183,7 +183,7 @@ def visualize_features(raw_features, labels, save_path):
     cbar_ax = fig.add_axes([0.15, 0.02, 0.7, 0.02])
     sm = plt.cm.ScalarMappable(cmap='hot', norm=plt.Normalize(vmin=vmin, vmax=vmax))
     sm.set_array([])
-    fig.colorbar(sm, cax=cbar_ax, orientation='horizontal', label='Monitor Current (A)')
+    fig.colorbar(sm, cax=cbar_ax, orientation='horizontal', label='Normalized State')
     
     os.makedirs(os.path.dirname(save_path), exist_ok=True)
     plt.savefig(save_path)

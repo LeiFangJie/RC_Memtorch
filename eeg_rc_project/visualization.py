@@ -163,7 +163,7 @@ def plot_multiple_rc_features(features_list, labels_list, save_path, title_prefi
     # Add a single colorbar
     fig.subplots_adjust(right=0.85)
     cbar_ax = fig.add_axes([0.88, 0.15, 0.04, 0.7])
-    fig.colorbar(im, cax=cbar_ax, label="Current (A)")
+    fig.colorbar(im, cax=cbar_ax, label="Normalized RC State")
     
     plt.savefig(save_path)
     plt.close()
