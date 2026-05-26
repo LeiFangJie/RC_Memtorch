@@ -41,6 +41,8 @@ CLASS_COLORS = {
     "Normal": "#4c6ef5",
     "Seizure": "#ff6b6b",
 }
+TIME_TICKS = [0, 64, 128, 192, 255]
+TIME_TICK_LABELS = ["0", "0.5", "1.0", "1.5", "2.0"]
 
 
 def set_publication_style():
@@ -123,20 +125,31 @@ def add_panel_label(ax, label):
 
 def plot_rc_dynamics(ax, feature, title, show_xlabel=False):
     feat_map = normalize_channels(feature.view(4, -1).numpy())
-    time = np.arange(feat_map.shape[1])
+    sample_step = 6
+    time = np.arange(feat_map.shape[1])[::sample_step]
     offsets = np.arange(4)[::-1]
 
     for band_i, band in enumerate(BAND_LABELS):
-        y = offsets[band_i] + feat_map[band_i] * 0.72
-        ax.plot(time, y, color=BAND_COLORS[band], lw=1.15, solid_capstyle="round")
-        ax.scatter(time[::4], y[::4], color=BAND_COLORS[band], s=3.8, linewidths=0, alpha=0.9)
+        # Keep each sampled trajectory inside its own band lane while preserving visible amplitude.
+        y = offsets[band_i] + 0.12 + feat_map[band_i, ::sample_step] * 0.74
+        ax.scatter(
+            time,
+            y,
+            color=BAND_COLORS[band],
+            marker="s",
+            s=8.5,
+            linewidths=0,
+            alpha=0.95,
+        )
 
     ax.set_xlim(0, feat_map.shape[1] - 1)
-    ax.set_ylim(-0.25, 3.95)
-    ax.set_yticks(offsets + 0.36)
+    ax.set_ylim(-0.08, 3.98)
+    ax.set_yticks(offsets + 0.49)
     ax.set_yticklabels(BAND_LABELS)
     ax.set_title(title, pad=4)
-    ax.set_xlabel("Time step" if show_xlabel else "", labelpad=3)
+    ax.set_xlabel("Time (s)" if show_xlabel else "", labelpad=3)
+    ax.set_xticks(TIME_TICKS)
+    ax.set_xticklabels(TIME_TICK_LABELS)
     ax.tick_params(axis="x", labelbottom=show_xlabel)
     ax.grid(axis="x", color="#d9d9d9", linestyle="--", linewidth=0.55, alpha=0.75)
     style_box(ax)
@@ -155,7 +168,9 @@ def plot_heatmap(ax, feature, title, vmin, vmax, show_xlabel=False):
     ax.set_yticks(np.arange(4))
     ax.set_yticklabels(BAND_LABELS)
     ax.set_title(title, pad=4)
-    ax.set_xlabel("Time step" if show_xlabel else "", labelpad=3)
+    ax.set_xlabel("Time (s)" if show_xlabel else "", labelpad=3)
+    ax.set_xticks(TIME_TICKS)
+    ax.set_xticklabels(TIME_TICK_LABELS)
     ax.tick_params(axis="x", labelbottom=show_xlabel)
     style_box(ax)
     return im
@@ -254,7 +269,9 @@ def compute_confusion_matrix(features, labels):
 
 
 def plot_confusion(ax, cm):
-    im = ax.imshow(cm, cmap="Blues", vmin=0, vmax=cm.max())
+    row_sums = cm.sum(axis=1, keepdims=True)
+    cm_norm = np.divide(cm, row_sums, out=np.zeros_like(cm, dtype=float), where=row_sums != 0)
+    im = ax.imshow(cm_norm, cmap="Blues", vmin=0, vmax=1)
     ax.set_title("Confusion matrix", pad=5)
     ax.set_xlabel("Predicted label")
     ax.set_ylabel("True label", labelpad=3)
@@ -263,11 +280,19 @@ def plot_confusion(ax, cm):
     ax.set_yticks([0, 1])
     ax.set_yticklabels(["Normal", "Seizure"])
 
-    threshold = cm.max() * 0.55
+    threshold = 0.55
     for i in range(2):
         for j in range(2):
-            color = "white" if cm[i, j] > threshold else "#4a4a4a"
-            ax.text(j, i, f"{cm[i, j]:d}", ha="center", va="center", fontsize=8, color=color)
+            color = "white" if cm_norm[i, j] > threshold else "#4a4a4a"
+            ax.text(
+                j,
+                i,
+                f"{cm_norm[i, j] * 100:.1f}%",
+                ha="center",
+                va="center",
+                fontsize=8,
+                color=color,
+            )
 
     style_box(ax)
     return im
@@ -325,7 +350,7 @@ def build_figure():
     cm_im = plot_confusion(ax_d, cm)
     add_panel_label(ax_d, "d")
     cbar_cm = fig.colorbar(cm_im, ax=ax_d, fraction=0.046, pad=0.035)
-    cbar_cm.set_label("Count", fontsize=8)
+    cbar_cm.set_label("Proportion", fontsize=8)
     cbar_cm.ax.tick_params(labelsize=7, width=0.65, length=2.8)
 
     return fig
