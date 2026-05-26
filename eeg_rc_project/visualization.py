@@ -51,8 +51,9 @@ def plot_multiple_spikes(spikes_list, labels_list, save_path, title_prefix):
         else:
             ax.set_xticks([])
             
+    fig.suptitle(f"{title_prefix} Spike Trains (Top 5 Samples)", fontsize=14, y=1.02)
     plt.tight_layout()
-    plt.savefig(save_path)
+    plt.savefig(save_path, bbox_inches='tight')
     plt.close()
 
 def plot_rc_dynamics_scatter(features_list, labels_list, save_path, title_prefix):
@@ -122,8 +123,9 @@ def plot_rc_dynamics_scatter(features_list, labels_list, save_path, title_prefix
         else:
             ax.set_xticks([])
             
+    fig.suptitle(f"{title_prefix} RC Dynamics (Top 5 Samples)", fontsize=14, y=1.02)
     plt.tight_layout()
-    plt.savefig(save_path)
+    plt.savefig(save_path, bbox_inches='tight')
     plt.close()
     print(f"Saved RC dynamics scatter plot to {save_path}")
 def plot_multiple_rc_features(features_list, labels_list, save_path, title_prefix):
@@ -164,13 +166,41 @@ def plot_multiple_rc_features(features_list, labels_list, save_path, title_prefi
     fig.subplots_adjust(right=0.85)
     cbar_ax = fig.add_axes([0.88, 0.15, 0.04, 0.7])
     fig.colorbar(im, cax=cbar_ax, label="Normalized RC State")
+    fig.suptitle(f"{title_prefix} RC Feature Heatmaps (Top 5 Samples)", fontsize=14, y=1.02)
     
-    plt.savefig(save_path)
+    plt.savefig(save_path, bbox_inches='tight')
     plt.close()
+
+def _filter_active_bands(idx_list, data, mode='feature'):
+    """
+    过滤掉任意频段完全无值的样本索引。
+    
+    参数:
+        idx_list (Tensor/ndarray): 样本索引列表
+        data (Tensor): 对应的数据 (features 或 spikes)
+        mode (str): 'feature' 表示 RC 特征 [N, 1024]，'spike' 表示脉冲 [N, 4, 512]
+        
+    返回:
+        list: 所有频段都有值的样本索引列表
+    """
+    valid_idx = []
+    for i in idx_list:
+        if mode == 'feature':
+            feat_map = data[i].view(4, -1).numpy()
+            # 要求每个频段的最大值和最小值不能同时为零（即不能全零）
+            if all(feat_map[c].max() > 0 or feat_map[c].min() < 0 for c in range(4)):
+                valid_idx.append(i.item() if torch.is_tensor(i) else i)
+        elif mode == 'spike':
+            spike = data[i].numpy() if torch.is_tensor(data[i]) else data[i]
+            if all(np.sum(spike[c]) > 0 for c in range(4)):
+                valid_idx.append(i.item() if torch.is_tensor(i) else i)
+    return valid_idx
+
 
 def visualize_sample(patient_id, num_samples=5):
     """
     随机抽取指定数量的正常样本和癫痫发作样本，调用绘图函数生成拼图并保存。
+    自动剔除任意频段完全无值（全零）的样本。
     
     参数:
         patient_id (str): 患者 ID
@@ -190,10 +220,19 @@ def visualize_sample(patient_id, num_samples=5):
     normal_idx = (labels == 0).nonzero(as_tuple=True)[0]
     seizure_idx = (labels == 1).nonzero(as_tuple=True)[0]
     
-    # Select random samples
+    # Filter out samples with completely empty bands
+    normal_valid = _filter_active_bands(normal_idx, features, mode='feature')
+    seizure_valid = _filter_active_bands(seizure_idx, features, mode='feature')
+    
+    if len(normal_valid) < num_samples:
+        print(f"Warning: Only {len(normal_valid)} normal samples have activity in all 4 bands (requested {num_samples}).")
+    if len(seizure_valid) < num_samples:
+        print(f"Warning: Only {len(seizure_valid)} seizure samples have activity in all 4 bands (requested {num_samples}).")
+    
+    # Select random samples from filtered pool
     np.random.seed(42)
-    selected_normal = np.random.choice(normal_idx.numpy(), min(num_samples, len(normal_idx)), replace=False)
-    selected_seizure = np.random.choice(seizure_idx.numpy(), min(num_samples, len(seizure_idx)), replace=False)
+    selected_normal = np.random.choice(normal_valid, min(num_samples, len(normal_valid)), replace=False) if len(normal_valid) > 0 else []
+    selected_seizure = np.random.choice(seizure_valid, min(num_samples, len(seizure_valid)), replace=False) if len(seizure_valid) > 0 else []
     
     if len(selected_normal) > 0:
         spikes_list = [spikes[i].numpy() for i in selected_normal]
