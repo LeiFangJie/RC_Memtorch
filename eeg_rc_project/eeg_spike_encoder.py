@@ -54,7 +54,32 @@ def z_score_normalize(data):
     std[std == 0] = 1e-8
     return (data - mean) / std
 
-def adaptive_delta_encoding(window_data, local_w=SPIKE_LOCAL_WINDOW, fixed_theta=FIXED_THETA, refractory_samples=REFRACTORY_SAMPLES):
+def _causal_moving_std(signal_1d, window):
+    """
+    计算因果滑动标准差，用于衡量当前时刻附近的局部波动强度。
+    """
+    if window <= 1:
+        return np.full_like(signal_1d, np.std(signal_1d) + 1e-8, dtype=np.float32)
+
+    kernel = np.ones(window, dtype=np.float32)
+    numerator = np.convolve(signal_1d, kernel, mode='full')[:len(signal_1d)]
+    denominator = np.convolve(np.ones_like(signal_1d), kernel, mode='full')[:len(signal_1d)]
+    mean = numerator / np.maximum(denominator, 1.0)
+
+    sq_numerator = np.convolve(signal_1d * signal_1d, kernel, mode='full')[:len(signal_1d)]
+    mean_sq = sq_numerator / np.maximum(denominator, 1.0)
+    var = np.maximum(mean_sq - mean * mean, 0.0)
+    return np.sqrt(var).astype(np.float32) + 1e-8
+
+
+def adaptive_delta_encoding(
+    window_data,
+    local_w=SPIKE_LOCAL_WINDOW,
+    fixed_theta=FIXED_THETA,
+    refractory_samples=REFRACTORY_SAMPLES,
+    relative_std_window=RELATIVE_STD_WINDOW,
+    relative_theta=RELATIVE_THETA,
+):
     """
     对信号窗口应用固定绝对阈值的 Delta 脉冲编码。
     
@@ -65,13 +90,16 @@ def adaptive_delta_encoding(window_data, local_w=SPIKE_LOCAL_WINDOW, fixed_theta
     现在的逻辑是：
     1. 依赖预处理阶段的【全局 Z-score 归一化】，保留不同时间段的绝对幅度差异。
     2. 使用【固定绝对阈值】(fixed_theta)。正常信号波动极小，无法越过阈值，产生大面积留白；癫痫信号波动大，产生密集脉冲。
-    3. 引入【不应期】(refractory_samples)，防止瞬时高频噪声导致连续激发，保护 RC 层不被迅速饱和。
+    3. 同时加入【局部相对异常门控】。只有当当前偏离既足够大，又显著高于局部背景波动时才触发 spike。
+    4. 引入【不应期】(refractory_samples)，防止瞬时高频噪声导致连续激发，保护 RC 层不被迅速饱和。
     
     参数:
         window_data (ndarray): 输入窗口数据，形状为 (4, 512)
         local_w (int): 用于计算局部因果均值的滑动窗口大小
         fixed_theta (float): 固定的激发绝对阈值（倍数）
         refractory_samples (int): 不应期采样点数
+        relative_std_window (int): 局部标准差计算窗口
+        relative_theta (float): 相对异常阈值（倍数）
         
     返回:
         ndarray: 脉冲序列，形状为 (4, 512)
@@ -88,14 +116,15 @@ def adaptive_delta_encoding(window_data, local_w=SPIKE_LOCAL_WINDOW, fixed_theta
         causal_mean = np.roll(causal_mean, 1)
         causal_mean[0] = band_data[0]
         diff = np.abs(band_data - causal_mean)
+        local_std = _causal_moving_std(diff, relative_std_window)
         
         band_spikes = np.zeros(time_steps)
         last_spike_time = -refractory_samples - 1
         
-        # 带有不应期控制的固定阈值脉冲生成
+        # 保留原版“绝对爆发”编码风格，同时要求当前偏离显著高于局部背景波动。
         for t in range(time_steps):
             if t - last_spike_time > refractory_samples:
-                if diff[t] > fixed_theta:
+                if diff[t] > fixed_theta and diff[t] > relative_theta * local_std[t]:
                     band_spikes[t] = 1
                     last_spike_time = t
                     

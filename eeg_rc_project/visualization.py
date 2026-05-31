@@ -44,7 +44,7 @@ def plot_multiple_spikes(spikes_list, labels_list, save_path, title_prefix):
         spikes_list (list): 包含多个形状为 [4, 512] 的脉冲数组的列表
         labels_list (list): 对应的标签列表
         save_path (str): 图片保存路径
-        title_prefix (str): 标题前缀（例如 "Normal" 或 "Seizure"）
+        title_prefix (str): 标题前缀（例如 "Normal" 或 "Pre-ictal"）
     """
     n_samples = len(spikes_list)
     fig, axes = plt.subplots(n_samples, 1, figsize=(10, 3 * n_samples))
@@ -68,7 +68,7 @@ def plot_multiple_spikes(spikes_list, labels_list, save_path, title_prefix):
         ax.set_xlim(0, 512)
         ax.set_ylim(0.5, 4.5)
         ax.set_title(
-            f"{title_prefix} Sample {i+1} (Label: {'Seizure' if label == 1 else 'Normal'})",
+            f"{title_prefix} Sample {i+1} (Label: {'Pre-ictal' if label == 1 else 'Normal'})",
             fontsize=13,
             fontweight='bold',
             pad=5,
@@ -145,7 +145,7 @@ def plot_rc_dynamics_scatter(features_list, labels_list, save_path, title_prefix
         ax.tick_params(axis='y', length=0)
         
         ax.set_title(
-            f"{title_prefix} Sample {i+1} RC Dynamics (Label: {'Seizure' if label == 1 else 'Normal'})",
+            f"{title_prefix} Sample {i+1} RC Dynamics (Label: {'Pre-ictal' if label == 1 else 'Normal'})",
             fontsize=13,
             fontweight='bold',
             pad=5,
@@ -189,7 +189,7 @@ def plot_multiple_rc_features(features_list, labels_list, save_path, title_prefi
         ax.set_yticks([0, 1, 2, 3])
         ax.set_yticklabels(['Delta', 'Theta', 'Alpha', 'Beta'])
         ax.set_title(
-            f"{title_prefix} Sample {i+1} (Label: {'Seizure' if label == 1 else 'Normal'})",
+            f"{title_prefix} Sample {i+1} (Label: {'Pre-ictal' if label == 1 else 'Normal'})",
             fontsize=13,
             fontweight='bold',
             pad=5,
@@ -286,9 +286,9 @@ def visualize_sample(patient_id, num_samples=5):
         labels_list = [labels[i].item() for i in selected_seizure]
         feat_list = [features[i] for i in selected_seizure]
         
-        plot_multiple_spikes(spikes_list, labels_list, os.path.join(PLOTS_DIR, f"spikes_seizure_top5.png"), "Seizure")
-        plot_multiple_rc_features(feat_list, labels_list, os.path.join(PLOTS_DIR, f"rc_feat_seizure_top5.png"), "Seizure")
-        plot_rc_dynamics_scatter(feat_list, labels_list, os.path.join(PLOTS_DIR, f"rc_dynamics_scatter_seizure_top5.png"), "Seizure")
+        plot_multiple_spikes(spikes_list, labels_list, os.path.join(PLOTS_DIR, f"spikes_seizure_top5.png"), "Pre-ictal")
+        plot_multiple_rc_features(feat_list, labels_list, os.path.join(PLOTS_DIR, f"rc_feat_seizure_top5.png"), "Pre-ictal")
+        plot_rc_dynamics_scatter(feat_list, labels_list, os.path.join(PLOTS_DIR, f"rc_dynamics_scatter_seizure_top5.png"), "Pre-ictal")
         
     print(f"Saved multiple sample visualizations to {PLOTS_DIR}")
 
@@ -344,10 +344,10 @@ def plot_clustering(patient_ids, max_samples_per_class=1000):
     plt.scatter(features_2d[normal_mask, 0], features_2d[normal_mask, 1], 
                 c='blue', label='Normal', alpha=0.5, s=10)
                 
-    # Plot seizure
+    # Plot pre-ictal
     seizure_mask = sampled_labels == 1
     plt.scatter(features_2d[seizure_mask, 0], features_2d[seizure_mask, 1], 
-                c='red', label='Seizure', alpha=0.5, s=10)
+                c='red', label='Pre-ictal', alpha=0.5, s=10)
                 
     plt.title("t-SNE Clustering of Raw RC Features", fontsize=16, fontweight='bold')
     plt.legend()
@@ -393,7 +393,7 @@ def plot_clustering(patient_ids, max_samples_per_class=1000):
         plt.scatter(embeddings_2d[normal_mask, 0], embeddings_2d[normal_mask, 1], 
                     c='blue', label='Normal', alpha=0.5, s=10)
         plt.scatter(embeddings_2d[seizure_mask, 0], embeddings_2d[seizure_mask, 1], 
-                    c='red', label='Seizure', alpha=0.5, s=10)
+                    c='red', label='Pre-ictal', alpha=0.5, s=10)
         plt.title("t-SNE Clustering of CNN Learned Embeddings (64D)", fontsize=16, fontweight='bold')
         plt.legend()
         

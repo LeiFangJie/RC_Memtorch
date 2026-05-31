@@ -33,6 +33,8 @@ BANDS = {
 SPIKE_LOCAL_WINDOW = 25  # 脉冲编码局部均值窗口长度（点），约 25/256≈0.1 秒
 FIXED_THETA = 0.8  # 固定绝对阈值。由于数据已做全局 Z-score，0.8 代表触发脉冲需要波形发生 0.8 倍全局标准差的突变
 REFRACTORY_SAMPLES = 3  # 不应期采样点数，防止连续高频噪声激发
+RELATIVE_STD_WINDOW = 25  # 局部异常标准差窗口，用于判断当前偏离是否显著高于局部背景
+RELATIVE_THETA = 1.2  # 相对异常阈值。偏离需同时超过局部波动强度，避免正常底噪被过度编码
 
 # RC Parameters
 R_OFF = 391623.0
@@ -40,6 +42,9 @@ R_ON = 42455.0
 V_READ = 0.1
 DECAY_RATE = 0.95
 RC_SAMPLE_INTERVAL = 2  # Sample every 2 steps out of 512, getting 256 states
+
+# Post-processing Parameters
+SMOOTH_WINDOW_SIZE = 11  # 滑动窗口多数投票平滑大小。2s窗口+1s重叠下，5 约对应 6 秒决策尺度
 
 # Selected patients for training and testing
 # For a full run, we would include all 24 patients.

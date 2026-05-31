@@ -15,7 +15,7 @@ import random
 import time
 import csv
 from sklearn.metrics import precision_score, recall_score, f1_score
-from config import PROCESSED_DATA_DIR, TEST_PATIENTS_RATIO
+from config import PROCESSED_DATA_DIR, TEST_PATIENTS_RATIO, SMOOTH_WINDOW_SIZE
 
 # FLOPs计算
 try:
@@ -159,7 +159,7 @@ def train_epoch(model, train_loader, criterion, optimizer, device):
     return avg_loss, accuracy
 
 
-def smooth_predictions(preds, window_size=5):
+def smooth_predictions(preds, window_size=SMOOTH_WINDOW_SIZE):
     """
     对预测结果进行滑动窗口多数投票平滑处理。
     与主流程 (train_classifier.py) 完全一致。
@@ -206,10 +206,10 @@ def evaluate(model, test_loader, device, use_smoothing=False):
     all_preds = np.array(all_preds)
     all_labels = np.array(all_labels)
     
-    # 对于 RC_CNN，使用窗平滑后处理（与主流程一致，window_size=5）
+    # 对于 RC_CNN，使用窗平滑后处理（与主流程一致）
     if use_smoothing:
-        all_preds = smooth_predictions(all_preds, window_size=5)
-        print(f"[Eval] Applied window smoothing (size=5)")
+        all_preds = smooth_predictions(all_preds, window_size=SMOOTH_WINDOW_SIZE)
+        print(f"[Eval] Applied window smoothing (size={SMOOTH_WINDOW_SIZE})")
     
     # 计算指标
     f1 = f1_score(all_labels, all_preds, zero_division=0)

@@ -215,8 +215,8 @@ def plot_confusion_matrix_figure(cm, save_path):
     """
     plt.figure(figsize=(6, 5))
     sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', 
-                xticklabels=['Normal', 'Seizure'], 
-                yticklabels=['Normal', 'Seizure'])
+                xticklabels=['Normal', 'Pre-ictal'], 
+                yticklabels=['Normal', 'Pre-ictal'])
     plt.title('Confusion Matrix')
     plt.ylabel('True Label')
     plt.xlabel('Predicted Label')
@@ -318,7 +318,7 @@ def train_model():
     # 降低学习率，加入权重衰减防止过拟合
     optimizer = optim.Adam(model.parameters(), lr=0.0001, weight_decay=1e-4)
     
-    epochs = 20
+    epochs = 50
     
     if is_single_patient:
         print("--- Single Patient Mode: Window-based random split ---")
@@ -490,7 +490,7 @@ def train_model():
             
     print("Training complete.")
 
-def smooth_predictions(preds, window_size=5):
+def smooth_predictions(preds, window_size=SMOOTH_WINDOW_SIZE):
     """
     对预测结果进行滑动窗口多数投票平滑处理。
     如果窗口内大部分预测为 1（癫痫），则当前点也判定为 1，否则为 0。
@@ -531,15 +531,15 @@ def evaluate_model(model, test_loader, device, epoch, epochs, is_best=False):
             
 
 
-    # 计算平滑后的指标 (窗口大小=5)
-    smoothed_preds = smooth_predictions(all_preds, window_size=5)
+    # 计算平滑后的指标
+    smoothed_preds = smooth_predictions(all_preds, window_size=SMOOTH_WINDOW_SIZE)
     s_acc = np.mean(smoothed_preds == np.array(all_labels))
     s_precision = precision_score(all_labels, smoothed_preds, zero_division=0)
     s_recall = recall_score(all_labels, smoothed_preds, zero_division=0)
     s_f1 = f1_score(all_labels, smoothed_preds, zero_division=0)
     s_cm = confusion_matrix(all_labels, smoothed_preds)
     
-    print(f"Epoch {epoch+1} Test Metrics (Smoothed, w=5):")
+    print(f"Epoch {epoch+1} Test Metrics (Smoothed, w={SMOOTH_WINDOW_SIZE}):")
     print(f"  Accuracy:  {s_acc*100:.2f}%")
     print(f"  Precision: {s_precision:.4f}")
     print(f"  Recall:    {s_recall:.4f}")

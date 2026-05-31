@@ -1,11 +1,11 @@
 """
 科研级脉冲编码对比图绘制脚本
-生成单样本对比SVG矢量图：Normal第1样本 与 Seizure第5样本上下拼接
+生成单样本对比SVG矢量图：Normal第1样本 与 Pre-ictal第5样本上下拼接
 
 策略：
 - 重新加载原始脉冲数据（chb01_spikes.pt）
 - 使用与visualize_sample()相同的随机种子(42)复现样本选择
-- 提取Normal第1个样本和Seizure第5个样本
+- 提取Normal第1个样本和Pre-ictal第5个样本
 - 上下拼接绘制并输出高质量SVG
 
 输出：适合论文插图的矢量图
@@ -16,6 +16,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib import rcParams
 from config import PROCESSED_DATA_DIR, PLOTS_DIR
+from visualization import _filter_active_bands, RANDOM_SEED
 
 # 科研图样式设置
 rcParams['font.family'] = 'sans-serif'
@@ -36,7 +37,7 @@ def load_specific_samples(patient_id="chb01"):
     
     返回:
         normal_sample: Normal类别第1个样本 [4, 512]
-        seizure_sample: Seizure类别第5个样本 [4, 512]
+        seizure_sample: Pre-ictal类别第5个样本 [4, 512]
     """
     spike_path = os.path.join(PROCESSED_DATA_DIR, f"{patient_id}_spikes.pt")
     
@@ -45,25 +46,27 @@ def load_specific_samples(patient_id="chb01"):
     
     spikes, labels = torch.load(spike_path)
     
-    # 找到正常和癫痫样本的索引
+    # 找到正常和正类样本的索引，并复用 visualize_sample 的有效频带过滤逻辑
     normal_idx = (labels == 0).nonzero(as_tuple=True)[0]
     seizure_idx = (labels == 1).nonzero(as_tuple=True)[0]
-    
-    # 使用相同的随机种子确保可复现
-    np.random.seed(42)
-    
+    normal_valid = _filter_active_bands(normal_idx, spikes, mode='spike')
+    seizure_valid = _filter_active_bands(seizure_idx, spikes, mode='spike')
+
+    # 使用与 visualize_sample 一致的随机种子和候选池
+    rng = np.random.RandomState(RANDOM_SEED)
+
     # 选择5个样本（与visualize_sample一致）
     num_samples = 5
-    selected_normal = np.random.choice(normal_idx.numpy(), min(num_samples, len(normal_idx)), replace=False)
-    selected_seizure = np.random.choice(seizure_idx.numpy(), min(num_samples, len(seizure_idx)), replace=False)
+    selected_normal = rng.choice(normal_valid, min(num_samples, len(normal_valid)), replace=False)
+    selected_seizure = rng.choice(seizure_valid, min(num_samples, len(seizure_valid)), replace=False)
     
-    # 取第1个Normal样本和第5个Seizure样本
+    # 取第1个Normal样本和第1个Pre-ictal样本，保持与当前可视化主图一致
     normal_sample = spikes[selected_normal[0]].numpy()  # 第1个
-    seizure_sample = spikes[selected_seizure[4]].numpy()  # 第5个
+    seizure_sample = spikes[selected_seizure[0]].numpy()  # 第1个
     
     print(f"已加载样本:")
     print(f"  - Normal Sample 1 (索引: {selected_normal[0]})")
-    print(f"  - Seizure Sample 5 (索引: {selected_seizure[4]})")
+    print(f"  - Pre-ictal Sample 1 (索引: {selected_seizure[0]})")
     
     return normal_sample, seizure_sample
 
@@ -117,11 +120,11 @@ def plot_spike_sample(ax, spikes, title, colors=None):
 
 def create_comparison_plot(normal_sample, seizure_sample, output_path=None):
     """
-    创建上下拼接的对比图：Seizure在上，Normal在下。
+    创建上下拼接的对比图：Pre-ictal在上，Normal在下。
     
     参数:
         normal_sample: 正常样本脉冲数据 [4, 512]
-        seizure_sample: 癫痫样本脉冲数据 [4, 512]
+        seizure_sample: Pre-ictal样本脉冲数据 [4, 512]
         output_path: SVG输出路径，默认为 plots/spikes_comparison.svg
     """
     if output_path is None:
@@ -130,14 +133,14 @@ def create_comparison_plot(normal_sample, seizure_sample, output_path=None):
     # 确保输出目录存在
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     
-    # 创建图形：2行1列，Seizure在上，Normal在下
+    # 创建图形：2行1列，Pre-ictal在上，Normal在下
     fig, axes = plt.subplots(2, 1, figsize=(12, 6), dpi=300)
     
     # 配色方案（与用户参考图一致）
     colors = ['#e41a1c', '#4daf4a', '#377eb8', '#ff7f00']  # Delta红, Theta绿, Alpha蓝, Beta橙
     
-    # 绘制Seizure样本（上半部分）
-    plot_spike_sample(axes[0], seizure_sample, "Seizure", colors)
+    # 绘制Pre-ictal样本（上半部分）
+    plot_spike_sample(axes[0], seizure_sample, "Pre-ictal", colors)
     axes[0].set_xlabel("")  # 移除中间图的x轴标签
     
     # 绘制Normal样本（下半部分）
